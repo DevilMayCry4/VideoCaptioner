@@ -1,0 +1,62 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    name: Build on Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || true
+          pip install pyinstaller
+
+      - name: (Optional) Install ffmpeg
+        if: ${{ env.INCLUDE_FFMPEG == 'true' }}
+        run: |
+          choco install ffmpeg -y || echo "ffmpeg install skipped"
+
+      - name: Build with PyInstaller (onefile)
+        run: |
+          # Ensure working dir is repo root
+          cd $GITHUB_WORKSPACE
+
+          # Common --add-data for resource folders. Windows requires ';' as separator
+          pyinstaller --noconfirm --clean --name VideoCaptioner --windowed --onefile \
+            --add-data "resource;resource" \
+            --add-data "public;public" \
+            --add-data "resource/subtitle_style;resource/subtitle_style" \
+            --add-data "app/components;app/components" \
+            main.py
+
+      - name: List dist
+        run: dir dist || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoCaptioner-win
+          path: |
+            dist/VideoCaptioner.exe
+            dist/VideoCaptioner
