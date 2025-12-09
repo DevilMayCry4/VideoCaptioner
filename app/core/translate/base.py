@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, List, Optional
+import time
 
 from app.core.asr.asr_data import ASRData, ASRDataSeg
 from app.core.entities import SubtitleProcessData
@@ -80,22 +81,25 @@ class BaseTranslator(ABC):
         self, chunks: List[List[SubtitleProcessData]]
     ) -> List[SubtitleProcessData]:
         """并行翻译所有块"""
-        futures = []
-        translated_list = []
+        # 为每个 future 记录对应的 chunk，以便在 future 抛出异常时知道应该回退到哪个 chunk
+        future_to_chunk = {}
+        translated_list: List[SubtitleProcessData] = []
 
         for chunk in chunks:
             future = self.executor.submit(self._safe_translate_chunk, chunk)
-            futures.append(future)
+            future_to_chunk[future] = chunk
 
-        for future in as_completed(futures):
+        for future in as_completed(list(future_to_chunk.keys())):
             if not self.is_running:
                 break
             try:
                 result = future.result()
                 translated_list.extend(result)
             except Exception as e:
+                # 如果某个 future 失败，使用该 future 对应的原始 chunk 回退，避免使用循环外的 chunk 导致错位
                 logger.error(f"翻译块失败：{str(e)}")
-                translated_list.extend(chunk)
+                failed_chunk = future_to_chunk.get(future, [])
+                translated_list.extend(failed_chunk)
 
         return translated_list
 
@@ -109,24 +113,41 @@ class BaseTranslator(ABC):
     def _safe_translate_chunk(
         self, chunk: List[SubtitleProcessData]
     ) -> List[SubtitleProcessData]:
-        """安全的翻译块"""
-        try:
-            cache_key = self._get_cache_key(chunk)
-            cached_result = self._cache.get(cache_key, default=None)
-            if cached_result is not None:
-                return cached_result
+        """安全的翻译块（带重试机制）
 
-            result = self._translate_chunk(chunk)
+        在发生异常时会自动重试最多 3 次（总共尝试 3 次）。
+        重试成功后会写入缓存并触发回调；重试都失败时会把异常向上抛出。
+        """
+        cache_key = self._get_cache_key(chunk)
+        cached_result = self._cache.get(cache_key, default=None)
+        if cached_result is not None:
+            return cached_result
 
-            if self.update_callback:
-                self.update_callback(result)
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                result = self._translate_chunk(chunk)
 
-            self._cache.set(cache_key, result, expire=86400 * 7)
-            return result
+                if self.update_callback:
+                    try:
+                        self.update_callback(result)
+                    except Exception:
+                        logger.exception("调用 update_callback 时发生错误，但不影响翻译结果写入缓存")
 
-        except Exception as e:
-            logger.exception(f"翻译失败: {str(e)}")
-            raise
+                self._cache.set(cache_key, result, expire=86400 * 7)
+                return result
+            except Exception as e:
+                logger.exception(
+                    f"翻译块尝试 {attempt}/{max_attempts} 失败: {str(e)}"
+                )
+                if attempt < max_attempts:
+                    # 指数退避的短暂等待
+                    sleep_time = 0.5 * attempt
+                    logger.info(f"等待 {sleep_time}s 后重试翻译块")
+                    time.sleep(sleep_time)
+                else:
+                    logger.error(f"翻译块已重试 {max_attempts} 次仍失败: {str(e)}")
+                    raise
 
     @staticmethod
     def _set_segments_translated_text(
