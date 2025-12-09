@@ -38,6 +38,8 @@ jobs:
           choco install ffmpeg -y || echo "ffmpeg install skipped"
 
       - name: Build with PyInstaller (onefile)
+        # Use bash on windows runner to allow POSIX-style line continuation
+        shell: bash
         run: |
           # Ensure working dir is repo root
           cd $GITHUB_WORKSPACE
