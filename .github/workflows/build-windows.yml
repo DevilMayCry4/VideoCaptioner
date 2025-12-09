@@ -1,9 +1,14 @@
 name: Build Windows EXE
+name: Build Windows EXE (installer)
 
 on:
   push:
     branches: [ master ]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Optional version string to embed in installer'
+        required: false
 
 jobs:
   build:
@@ -37,7 +42,23 @@ jobs:
         run: |
           choco install ffmpeg -y || echo "ffmpeg install skipped"
 
-      - name: Build with PyInstaller (onefile)
+      - name: Prepare version
+        id: ver
+        shell: bash
+        run: |
+          # Prefer workflow input version, then Git tag, else fallback to short commit sha
+          INPUT_VER="${{ github.event.inputs.version || '' }}"
+          if [ -n "$INPUT_VER" ]; then
+            VERSION="$INPUT_VER"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION=$(git rev-parse --short HEAD)
+            VERSION="0.0.0-dev-$VERSION"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build with PyInstaller (onedir)
         # Use bash on windows runner to allow POSIX-style line continuation
         shell: bash
         run: |
@@ -57,15 +78,78 @@ jobs:
 
           echo "Final add-data args: ${ADD_ARGS[*]}"
 
-          pyinstaller --noconfirm --clean --name VideoCaptioner --windowed --onefile "${ADD_ARGS[@]}" main.py
+          # Use --onedir to produce folder that installer can package
+          pyinstaller --noconfirm --clean --name VideoCaptioner --windowed --onedir "${ADD_ARGS[@]}" main.py
 
       - name: List dist
-        run: dir dist || true
+        shell: bash
+        run: |
+          echo "dist contents:"; ls -la dist || true
 
-      - name: Upload artifact
+      - name: Install Inno Setup (for installer)
+        run: |
+          choco install innosetup -y
+
+      - name: Build Installer with Inno Setup
+        shell: bash
+        env:
+          VIDEO_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          echo "Building installer for version: $VIDEO_VERSION"
+          ISCC_PATH="C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe"
+          if [ ! -f "$ISCC_PATH" ]; then
+            echo "ISCC not found at $ISCC_PATH"; exit 1
+          fi
+
+          # Create a temporary working folder and copy built files
+          OUTDIR="$GITHUB_WORKSPACE/dist_installer"
+          rm -rf "$OUTDIR" || true
+          mkdir -p "$OUTDIR"
+          cp -r "dist/VideoCaptioner/"* "$OUTDIR/"
+
+          # Copy license and README if present
+          if [ -f LICENSE ]; then cp LICENSE "$OUTDIR/"; fi
+          if [ -f README.md ]; then cp README.md "$OUTDIR/"; fi
+
+          # Run Inno Setup compiler (ISCC) with version define
+          "$ISCC_PATH" /DMyAppVersion="$VIDEO_VERSION" build/installer.iss
+
+          # Move produced installer into dist_installer for consistent artifact collection
+          OUTPUT_EXE="VideoCaptioner-Setup-${VIDEO_VERSION}.exe"
+          if [ -f "$OUTPUT_EXE" ]; then
+            mv "$OUTPUT_EXE" "$OUTDIR/"
+          else
+            echo "Expected installer $OUTPUT_EXE not found"; ls -la || true; exit 1
+          fi
+
+      - name: Upload artifacts (installer + dist)
         uses: actions/upload-artifact@v4
         with:
-          name: VideoCaptioner-win
+          name: VideoCaptioner-windows-artifacts
           path: |
-            dist/VideoCaptioner.exe
             dist/VideoCaptioner
+            dist/VideoCaptioner.exe
+            dist_installer/*.exe
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.ver.outputs.version }}
+          release_name: "VideoCaptioner ${{ steps.ver.outputs.version }}"
+          body: |
+            Automated build artifact for version ${{ steps.ver.outputs.version }}
+          draft: false
+          prerelease: false
+
+      - name: Upload installer to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: dist_installer/VideoCaptioner-Setup-${{ steps.ver.outputs.version }}.exe
+          asset_name: VideoCaptioner-Setup-${{ steps.ver.outputs.version }}.exe
+          asset_content_type: application/octet-stream
