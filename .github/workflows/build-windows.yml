@@ -44,13 +44,20 @@ jobs:
           # Ensure working dir is repo root
           cd $GITHUB_WORKSPACE
 
-          # Common --add-data for resource folders. Windows requires ';' as separator
-          pyinstaller --noconfirm --clean --name VideoCaptioner --windowed --onefile \
-            --add-data "resource;resource" \
-            --add-data "public;public" \
-            --add-data "resource/subtitle_style;resource/subtitle_style" \
-            --add-data "app/components;app/components" \
-            main.py
+          # Dynamically include --add-data only for existing resource paths to avoid pyinstaller errors
+          ADD_ARGS=()
+          for d in resource public resource/subtitle_style app/components; do
+            if [ -e "$d" ]; then
+              echo "Including data: $d"
+              ADD_ARGS+=(--add-data "$d;$d")
+            else
+              echo "Not found, skipping: $d"
+            fi
+          done
+
+          echo "Final add-data args: ${ADD_ARGS[*]}"
+
+          pyinstaller --noconfirm --clean --name VideoCaptioner --windowed --onefile "${ADD_ARGS[@]}" main.py
 
       - name: List dist
         run: dir dist || true
