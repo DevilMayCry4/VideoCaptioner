@@ -6,7 +6,11 @@
 [Setup]
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-DefaultDirName={pf}\{#MyAppName}
+; Default installation directory. This will use, in order of precedence:
+; 1) command-line parameter /MyAppDir="..." (accessed as {param:MyAppDir})
+; 2) built-in /DIR="..." parameter (accessed as {param:dir})
+; 3) Program Files
+DefaultDirName={param:MyAppDir|{param:dir|{pf}\{#MyAppName}}}
 DefaultGroupName={#MyAppName}
 OutputBaseFilename=VideoCaptioner-Setup-{#MyAppVersion}
 Compression=lzma
