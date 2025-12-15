@@ -68,7 +68,7 @@
 
 提示：每一个步骤均支持单独处理，均支持文件拖拽。软件具体模型选择和参数配置说明，请查看下文。
 
-### macOS / Linux 用户
+### macOS / Linux  用户
 
 1. 克隆项目并进入目录
 
@@ -103,6 +103,62 @@ chmod +x run.sh
 brew install ffmpeg
 brew install aria2
 brew install python@3.**
+```
+
+2. 克隆项目
+
+```bash
+git clone https://github.com/WEIFENG2333/VideoCaptioner.git
+cd VideoCaptioner
+```
+
+3. 安装依赖
+
+```bash
+python3.** -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+4. 运行程序
+
+```bash
+python main.py
+```
+
+</details>
+
+###windows 用户
+
+```bash
+git clone https://github.com/WEIFENG2333/VideoCaptioner.git
+cd VideoCaptioner
+```
+
+2. 运行启动脚本
+
+```bash
+chmod +x run.sh
+./run.sh
+```
+
+脚本会自动：
+
+- 检测Python环境
+- 创建虚拟环境并安装Python依赖
+- 检测系统工具（ffmpeg、aria2）
+- 启动应用程序
+
+**注意**：macOS用户需要先安装Homebrew。
+
+<details>
+<summary>手动安装步骤</summary>
+
+
+1. 安装 ffmpeg 和 Aria2 下载工具
+
+```bash
+下载ffmpeg和Aria2，分别配置环境变量
 ```
 
 2. 克隆项目
